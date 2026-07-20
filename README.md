@@ -94,11 +94,33 @@ npm run build
 
 # 2. Launch — builds the sandbox image on first run, then drops you into opencode
 node dist/launcher/index.js
-#   (or `npm link` once, then just: caracal)
 
 # No Docker? Run directly on the host instead (no isolation — read the docs first):
-caracal --local
+node dist/launcher/index.js --local
 ```
+
+### Optional: install the `caracal` command
+
+Instead of typing `node dist/launcher/index.js` every time, link the package
+once to get a `caracal` command on your PATH:
+
+```bash
+npm link
+```
+
+From then on, from any directory:
+
+```bash
+caracal              # sandboxed (default)
+caracal --local      # no Docker, runs on the host
+caracal target acme  # create/select a target
+```
+
+Re-run `npm run build` after pulling changes or editing the source — `caracal`
+runs the built `dist/`, not `src/` directly. If `npm link` fails with a
+permissions error, either re-run it with `sudo` or use a Node version manager
+(nvm/fnm) that doesn't need root for global packages. To remove the link
+later: `npm unlink -g caracal`.
 
 On first launch the framework starts in **strict HITL** mode: every potentially
 intrusive action pauses for your approval.
