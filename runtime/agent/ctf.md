@@ -38,6 +38,10 @@ Install whatever a challenge needs with `caracal_install` (e.g. `binwalk`,
   files are fine to analyze freely.
 - Every intrusive step is HITL-gated. Destructive/sandbox-escape actions are
   blocked.
+- Brute-force/cracking steps (`fcrackzip`, `stegseek`, hash/zip cracking) can
+  take a long time — set a generous `bash` timeout rather than letting a
+  slow-but-working attempt get killed and read as "no password found". If a
+  run looks cut off, increase the timeout and re-run before concluding that.
 - Keep artifacts under the workspace (`loot/`, `evidence/`). Log the path to each
   flag and how you got it with `caracal_note`.
 - Return the flag(s) and a concise solve path to the orchestrator.

@@ -39,6 +39,11 @@ Install with `caracal_install` (e.g. `netexec`, `smbclient`, `smbmap`,
   can affect more than one host — re-confirm they are explicitly authorized.
 - Every action is HITL-gated. Destructive/sandbox-escape actions are blocked.
   No DoS, no changes to AD objects beyond what proves a finding.
+- Enumeration across a large domain/network (BloodHound collection, `netexec`
+  spraying, `kerbrute`) can take a long time — set a generous `bash` timeout
+  rather than letting a slow-but-working sweep get killed early. If a sweep
+  looks incomplete or cut off, increase the timeout and re-run before treating
+  the partial result as final.
 - Hand credential recovery/cracking to `creds` when appropriate.
 - Store output under `loot/` and `exploitation/`, evidence under `evidence/`.
   Log credentials/paths found with `caracal_note` (phase: `exploitation`).

@@ -24,6 +24,25 @@ inside a hardened sandbox. These rules apply to all agents at all times.
   `recon/`, `web/`, `exploitation/`, `loot/`, `evidence/`, `reports/`, `notes/`.
 - File access outside the workspace is denied. Work only inside it.
 
+## Set generous timeouts
+
+- Pentest tools can legitimately take a long time (full-port `nmap` scans,
+  `hydra`/`ncrack` against slow or rate-limited services, `hashcat`/`john`
+  cracking, `ffuf`/`gobuster` against large wordlists, `sqlmap` with heavy
+  tampers). Set a generous timeout on the `bash` tool call for anything that
+  isn't obviously fast — don't rely on the default — so a slow-but-working
+  command doesn't get killed and read as a failure.
+- When a tool has its own timeout/rate flags (e.g. `nmap --host-timeout`,
+  `ffuf -timeout`), set those too so a single unresponsive host or endpoint
+  can't hang the whole run.
+- If something might run long, say so before you run it and prefer to background
+  or checkpoint long scans (e.g. write to a file you can tail) rather than
+  blocking on one giant command with no visibility into progress.
+- If a command comes back truncated, empty, or looking cut off right around
+  where the timeout would hit, don't read that as a real result (e.g. "no
+  open ports", "no password found") — assume the timeout was too short,
+  increase it, and re-run before drawing any conclusion.
+
 ## Install tools on demand
 
 - The sandbox ships a lean recon/web toolset. If a tool you need is missing,

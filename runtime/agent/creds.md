@@ -36,6 +36,11 @@ Install what you need with `caracal_install` (e.g. `hydra`, `hashcat`, `john`,
 - **Throttle online attacks** to avoid lockouts/DoS — respect account-lockout
   policies; prefer spraying (few passwords, many users) over brute force when
   lockout is a risk. No DoS.
+- Brute force, spraying, and offline cracking (`hydra`, `hashcat`, `john`) can
+  legitimately run for a long time — set a generous `bash` timeout so a slow
+  but still-working attack isn't killed and mistaken for a dead end. If a run
+  looks like it was cut off mid-attempt, don't report "no valid credentials" —
+  increase the timeout and re-run before concluding that.
 - Every attack is HITL-gated. Destructive/sandbox-escape actions are blocked.
 - Store wordlists/hashes/cracked output under `loot/`, evidence under `evidence/`.
   Log recovered credentials (mask secrets in notes) with `caracal_note`
