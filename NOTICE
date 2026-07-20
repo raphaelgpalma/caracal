@@ -1,0 +1,22 @@
+Caracal
+Copyright (c) 2026 raphaelgpalma
+Licensed under the MIT License (see LICENSE).
+
+This product is original software. It contains NO source code from the projects
+listed below; they are acknowledged as architectural or conceptual inspiration
+only. See CREDITS for details.
+
+Architectural inspiration:
+  - CAI (Cybersecurity AI) — Alias Robotics S.L.
+      https://github.com/aliasrobotics/cai
+      Caracal re-implements CAI-style multi-agent concepts from scratch in
+      TypeScript. No CAI code (MIT or proprietary) is included or redistributed.
+
+Runtime dependency:
+  - opencode — https://opencode.ai
+      Caracal runs on top of opencode (installed separately, under its own
+      license) and integrates via opencode's public plugin/agent/config APIs.
+
+Trademarks are the property of their respective owners. References to third-party
+projects are nominative, for identification and attribution only, and do not
+imply endorsement.

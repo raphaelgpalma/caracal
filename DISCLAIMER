@@ -1,0 +1,35 @@
+CARACAL — RESPONSIBLE USE DISCLAIMER
+=====================================
+
+Caracal is an offensive-security automation framework. It orchestrates AI
+agents that can execute reconnaissance, exploitation and other intrusive
+actions against networked systems.
+
+AUTHORIZED USE ONLY
+-------------------
+You may use Caracal ONLY against systems that you own or for which you hold
+explicit, written authorization to test (e.g. a signed penetration-testing
+engagement, a bug-bounty program scope, or a lab/CTF environment you control).
+
+Unauthorized access to computer systems is illegal in virtually every
+jurisdiction. The authors and contributors of Caracal accept NO liability for
+misuse, damage, or unlawful activity carried out with this software. By using
+Caracal you accept full and sole responsibility for your actions and confirm
+that you have the necessary authorization.
+
+DESIGN INTENT
+-------------
+Caracal deliberately runs inside a hardened Docker sandbox and ships a
+consistent Human-In-The-Loop (HITL) policy: dangerous actions require explicit
+human approval before execution. These controls are safety features, not
+guarantees. Do not disable them unless you fully understand the consequences.
+
+NETWORK MODEL
+-------------
+For pentesting to work, the sandbox shares the host network stack
+(`--network host`) and is granted raw-socket capabilities. This is powerful and
+intentional. It means the container can reach everything the host can reach.
+Run Caracal only from a machine and network position from which you are
+authorized to operate.
+
+If you do not agree with these terms, do not use this software.

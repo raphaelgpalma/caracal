@@ -1,0 +1,10 @@
+{
+  "name": "caracal-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Caracal opencode plugin: central HITL policy, sandbox guard, and engagement tools.",
+  "type": "module",
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.3.2"
+  }
+}

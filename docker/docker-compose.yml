@@ -1,0 +1,37 @@
+# Alternative way to run the sandbox (the `caracal` launcher does the
+# equivalent with `docker run`). Usage:
+#
+#   CARACAL_WORKSPACE=./engagement docker compose -f docker/docker-compose.yml up -d
+#   docker compose -f docker/docker-compose.yml exec sandbox opencode
+#
+# SECURITY NOTE: host networking + raw-socket caps are intentional and required
+# for pentesting. See docs/sandbox.md.
+
+services:
+  sandbox:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-1.17.8}
+    image: ${CARACAL_IMAGE:-caracal:latest}
+    container_name: ${CARACAL_CONTAINER:-caracal-sandbox}
+    # Full host network access for pentesting (Linux only).
+    network_mode: host
+    cap_add:
+      - NET_ADMIN # routing/iptables/tunnels
+      - NET_RAW # raw sockets (nmap SYN scans, ping, packet crafting)
+    security_opt:
+      - seccomp=unconfined # broad tool compatibility (strace, ptrace, etc.)
+    environment:
+      CARACAL_SANDBOX: "1"
+      CARACAL_HITL: ${CARACAL_HITL:-strict}
+      CARACAL_WORKSPACE_DIR: /root/engagement
+    volumes:
+      # Your engagement files (loot, evidence, notes) persist on the host.
+      - ${CARACAL_WORKSPACE:-./engagement}:/root/engagement
+      # Reuse host opencode credentials, read-only. Never written from inside.
+      - ${HOME}/.local/share/opencode/auth.json:/root/.local/share/opencode/auth.json:ro
+    # Keep the container alive; exec opencode into it on demand.
+    command: ["sleep", "infinity"]
+    restart: "no"

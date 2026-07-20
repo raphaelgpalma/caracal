@@ -1,0 +1,42 @@
+{
+  "name": "caracal",
+  "version": "0.1.0",
+  "description": "A multi-agent cybersecurity (pentesting) framework that runs on top of opencode inside a hardened, host-networked Docker sandbox. Architecture inspired by CAI (Cybersecurity AI).",
+  "type": "module",
+  "license": "MIT",
+  "author": "raphaelgpalma",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/raphaelgpalma/caracal.git"
+  },
+  "bin": {
+    "caracal": "./dist/launcher/index.js"
+  },
+  "files": [
+    "dist/",
+    "runtime/",
+    "docker/",
+    "docs/",
+    "assets/",
+    "README.md",
+    "DISCLAIMER",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --experimental-strip-types src/launcher/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:plugin": "tsc -p runtime/plugin/tsconfig.json --noEmit",
+    "format": "prettier --write \"**/*.{ts,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,json,md}\""
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.3.2",
+    "@types/node": "^22.10.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.7.0"
+  }
+}
