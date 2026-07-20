@@ -76,6 +76,11 @@ binary of each segment, so `nmap … | grep open` is still `recon` and
 
 Set it per launch: `CARACAL_HITL=guided caracal`, or in `.env`.
 
+> In `caracal --local` (no container isolation, see `docs/sandbox.md`),
+> `auto` is capped down to `guided` — local mode never runs silently, even if
+> requested, because there is no sandbox to fall back on if something goes
+> wrong.
+
 ## What the user sees
 
 When an action is gated, opencode shows its standard approval prompt with

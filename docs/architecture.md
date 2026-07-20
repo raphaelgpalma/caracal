@@ -18,8 +18,11 @@ and layers the CAI-style architecture on top via three seams opencode exposes:
 3. **Config** (`runtime/opencode.json`) — permissions that route intrusive
    actions through the HITL policy and protect the host.
 
-All of this is baked into a Docker sandbox as opencode's **global config**, so
-the entire architecture is present the moment opencode starts inside the box.
+By default this is baked into a Docker sandbox as opencode's **global config**,
+so the entire architecture is present the moment opencode starts inside the
+box. The same config can also be synced onto the host's own opencode install
+for `caracal --local` (no container) — see [sandbox.md](./sandbox.md) for the
+trade-offs of that mode.
 
 ## CAI → Caracal mapping
 
@@ -33,10 +36,12 @@ the entire architecture is present the moment opencode starts inside the box.
 | Tool execution (`generic_linux_command`)                                                | opencode `bash` tool                                                                           | built-in                                           |
 | Agent **factory / registry** + `agents.yml`                                             | opencode agent auto-discovery from `agent/`                                                    | built-in                                           |
 | **Human-In-The-Loop**                                                                   | central policy in the plugin (`permission.ask` + `tool.execute.before`)                        | `runtime/plugin/caracal.ts`, see [hitl.md](./hitl.md) |
-| **Virtualization** (`--network host`, `NET_RAW`, seccomp unconfined)                    | the Docker sandbox                                                                             | `docker/`, see [sandbox.md](./sandbox.md)          |
+| **Virtualization** (`--network host`, `NET_RAW`, seccomp unconfined)                    | the Docker sandbox (default mode; skipped entirely in `--local`)                                | `docker/`, see [sandbox.md](./sandbox.md)          |
 | `cai` CLI entry point                                                                   | the `caracal` host launcher                                                                   | `src/launcher/`                                    |
 
 ## Runtime topology
+
+Sandbox mode (default):
 
 ```
 host: `caracal` launcher (src/launcher)
@@ -52,6 +57,21 @@ sandbox container
 
 flow:  operator ⇄ orchestrator ──task──▶ recon / web-exploit / reporter
                                   every intrusive step ⟶ HITL gate
+```
+
+Local mode (`caracal --local`) — same config, no container:
+
+```
+host: `caracal --local` launcher (src/launcher/local.ts)
+   │  syncs runtime/{opencode.json,plugin/,agent/} into the host's own
+   │  ~/.config/opencode/ on every launch, then execs opencode directly
+   ▼
+opencode  (whatever version is on your PATH)
+   └── ~/.config/opencode/          ← same three pieces, synced, not baked
+   working dir: <target>/engagement ← same per-target workspace as sandbox mode
+
+flow: identical to sandbox mode, but `bash` runs as your own host user with
+      no container boundary — see sandbox.md § Security model.
 ```
 
 ## Why "agents + plugin", not "a plugin OR an agent"

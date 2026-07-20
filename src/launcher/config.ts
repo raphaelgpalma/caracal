@@ -10,10 +10,13 @@ import { DEFAULT_TARGET, getActiveTarget, targetDataDir, targetWorkspace } from 
 
 export type HitlMode = "strict" | "guided" | "auto"
 export type AuthMode = "mount" | "env"
+export type RunMode = "sandbox" | "local"
 
 export interface CaracalConfig {
   /** Root of the caracal repo (contains docker/Dockerfile and runtime/). */
   repoRoot: string
+  /** "sandbox" (default, Docker-isolated) or "local" (runs directly on the host). */
+  mode: RunMode
   /** Docker image tag to build/run. */
   image: string
   /** Container name. */
@@ -65,7 +68,17 @@ function resolveRepoRoot(): string {
   return resolve(here, "..", "..")
 }
 
-export function loadConfig(cwd: string = process.cwd()): CaracalConfig {
+/** Resolve run mode: --local/--sandbox flag (highest priority) > CARACAL_MODE > sandbox (default). */
+function resolveMode(flag: RunMode | undefined): RunMode {
+  if (flag) return flag
+  const v = (process.env.CARACAL_MODE ?? "").toLowerCase()
+  return v === "local" ? "local" : "sandbox"
+}
+
+export function loadConfig(
+  cwd: string = process.cwd(),
+  modeFlag?: RunMode,
+): CaracalConfig {
   loadDotEnv(cwd)
 
   // Workspace + opencode data dir come from the active target. A raw
@@ -85,6 +98,7 @@ export function loadConfig(cwd: string = process.cwd()): CaracalConfig {
 
   return {
     repoRoot: resolveRepoRoot(),
+    mode: resolveMode(modeFlag),
     image: process.env.CARACAL_IMAGE ?? "caracal:latest",
     container: process.env.CARACAL_CONTAINER ?? "caracal-sandbox",
     opencodeVersion: process.env.OPENCODE_VERSION ?? "1.17.8",

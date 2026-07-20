@@ -2,26 +2,30 @@
 /**
  * caracal — host launcher.
  *
- * Brings up the hardened sandbox and drops you into opencode inside it. opencode
- * for Caracal is ONLY ever launched through this container; it is never run
- * directly on the host.
+ * Brings up opencode with the Caracal architecture (plugin + agents + HITL).
+ * By default this happens inside a hardened Docker sandbox; pass --local to
+ * run directly on the host instead (no container isolation — see `caracal
+ * --help` and docs/sandbox.md before using it).
  *
- *   caracal               build (if needed) + start sandbox + open opencode (active target)
- *   caracal target [name] show / create+select the active target (engagement)
- *   caracal targets       list saved targets
- *   caracal rm <name>     delete a target and all its files (dry-run; --force to confirm)
- *   caracal build         (re)build the sandbox image
- *   caracal shell         open a bash shell inside the sandbox
- *   caracal status        show docker / image / container / target state
- *   caracal reset [name]  wipe a target's session/context (keeps its files)
- *   caracal stop          stop the sandbox container
- *   caracal down          stop and remove the sandbox container
+ *   caracal                 build (if needed) + start sandbox + open opencode (active target)
+ *   caracal --local         same, but runs directly on the host (no Docker, no isolation)
+ *   caracal target [name]   show / create+select the active target (engagement)
+ *   caracal targets         list saved targets
+ *   caracal rm <name>       delete a target and all its files (dry-run; --force to confirm)
+ *   caracal build           (re)build the sandbox image
+ *   caracal shell           open a bash shell inside the sandbox
+ *   caracal status          show docker / image / container / target state
+ *   caracal reset [name]    wipe a target's session/context (keeps its files)
+ *   caracal stop            stop the sandbox container
+ *   caracal down            stop and remove the sandbox container
  *   caracal --help
  */
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
+import { createInterface } from "node:readline/promises"
 import { resolve } from "node:path"
-import { loadConfig, type CaracalConfig } from "./config.js"
+import { loadConfig, type CaracalConfig, type RunMode } from "./config.js"
 import * as docker from "./docker.js"
+import * as local from "./local.js"
 import * as targets from "./targets.js"
 import {
   discoverAgentNames,
@@ -60,6 +64,9 @@ function printBanner(cfg: CaracalConfig): void {
     // Banner is cosmetic — ignore if the asset is missing.
     log(`${BOLD}${DARKRED}CARACAL${RESET} — multi-agent offensive security, under control`)
   }
+  if (cfg.mode === "local") {
+    log(`${BOLD}${YELLOW}LOCAL MODE${RESET} ${DIM}— running on the host, no container isolation${RESET}`)
+  }
 }
 
 function version(cfg: CaracalConfig): string {
@@ -75,7 +82,7 @@ function printHelp(cfg: CaracalConfig): void {
   log(`${BOLD}caracal${RESET} ${DIM}v${version(cfg)}${RESET} — multi-agent pentesting on opencode
 
 ${BOLD}Usage${RESET}
-  caracal [command]
+  caracal [command] [--local | --sandbox]
 
 ${BOLD}Commands${RESET}
   ${CYAN}(default)${RESET}      build if needed, start the sandbox, open opencode on the active target
@@ -91,6 +98,14 @@ ${BOLD}Commands${RESET}
   ${CYAN}down${RESET}           stop and remove the sandbox container (not the target's files)
   ${CYAN}help${RESET}           show this help
 
+${BOLD}Run mode${RESET} ${DIM}(sandbox is the default and the recommended mode)${RESET}
+  ${CYAN}--sandbox${RESET}  run inside the hardened Docker sandbox ${DIM}(default)${RESET}
+  ${CYAN}--local${RESET}    run opencode directly on this machine — ${YELLOW}no container isolation${RESET}.
+             The model's shell tool then runs with your own user, network and
+             filesystem access. Only use this if you understand and accept
+             that risk (e.g. you already work inside your own VM/lab). Applies
+             to the default launch and to 'shell'. Persist with CARACAL_MODE=local.
+
 ${BOLD}Targets${RESET} ${DIM}(each is a persistent, separate engagement)${RESET}
   Files + opencode session live per target under ${DIM}~/.caracal/targets/<name>/${RESET}.
   Switching targets recreates a clean sandbox; resuming one restores files + context.
@@ -99,9 +114,10 @@ ${BOLD}Targets${RESET} ${DIM}(each is a persistent, separate engagement)${RESET}
     caracal target old    # switch back to a previous target (restores its session)
 
 ${BOLD}Key settings${RESET} ${DIM}(env or .env)${RESET}
+  CARACAL_MODE       sandbox | local   (default sandbox; overridden by --local/--sandbox)
   CARACAL_HOME       caracal state dir: targets, active pointer, model selection (default ~/.caracal)
   CARACAL_WORKSPACE  pin a raw workspace dir (advanced; bypasses targets, ephemeral sessions)
-  CARACAL_HITL       strict | guided | auto   (default strict)
+  CARACAL_HITL       strict | guided | auto   (default strict; auto is capped to guided in --local)
   CARACAL_MODEL      default model, e.g. ollama-cloud/qwen3-coder:480b
                       ${DIM}(per-agent models: 'caracal models')${RESET}
   CARACAL_IMAGE      image tag   (default caracal:latest)
@@ -114,12 +130,44 @@ ${DIM}Offensive-security tool — authorized testing only. See DISCLAIMER.${RESE
 function requireDocker(): void {
   if (!docker.isDockerInstalled()) {
     fail("Docker is required but was not found on PATH.")
-    log(`${DIM}Install Docker, then re-run. Caracal runs entirely inside a Docker sandbox.${RESET}`)
+    log(`${DIM}Install Docker, then re-run, or use --local to run without a sandbox.${RESET}`)
     process.exit(1)
   }
   if (!docker.isDockerRunning()) {
     fail("Docker is installed but the daemon is not running (or you lack permission).")
     log(`${DIM}Start Docker (e.g. 'sudo systemctl start docker') and try again.${RESET}`)
+    process.exit(1)
+  }
+}
+
+/** Verify opencode is on PATH for local mode; exit otherwise. */
+function requireOpencodeLocal(): void {
+  if (!local.isOpencodeInstalled()) {
+    fail("opencode was not found on PATH.")
+    log(`${DIM}Install it (https://opencode.ai) and authenticate ('opencode auth login'), then re-run.${RESET}`)
+    process.exit(1)
+  }
+}
+
+/**
+ * Local mode has no container isolation: the model's bash tool runs with the
+ * operator's real user, network, and filesystem access. Refuse to proceed
+ * without an explicit, interactive "yes" — this cannot be skipped via a flag.
+ */
+async function confirmLocalMode(): Promise<void> {
+  warn(`${BOLD}LOCAL MODE${RESET}${YELLOW} — no container isolation.${RESET}`)
+  log(
+    `${DIM}The model will run shell commands directly on this machine, with your user's\n` +
+      `privileges, network access, and filesystem (outside the engagement workspace is\n` +
+      `still off-limits to file tools, but bash is not sandboxed). Only continue if you\n` +
+      `understand and accept that risk. See docs/sandbox.md.${RESET}`,
+  )
+  if (process.env.CARACAL_YES === "1") return
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  const answer = await rl.question(`Continue in local mode? [y/N] `)
+  rl.close()
+  if (answer.trim().toLowerCase() !== "y") {
+    fail("Aborted. Run without --local to use the sandboxed (default) mode.")
     process.exit(1)
   }
 }
@@ -258,11 +306,41 @@ function openOpencode(
   process.exit(code)
 }
 
-function cmdLaunch(cfg: CaracalConfig): void {
+/** Local-mode equivalent of openOpencode: runs opencode directly on the host. */
+function openOpencodeLocal(
+  cfg: CaracalConfig,
+  models: { default: string; agents: Record<string, string> },
+): never {
+  const orchestrator = models.agents["orchestrator"] ?? models.default
+  info(`Opening opencode locally (HITL=${cfg.hitl}, orchestrator=${orchestrator})…`)
+  log(
+    DIM +
+      "models per agent are set in <workspace>/opencode.json — edit with 'caracal models'" +
+      RESET,
+  )
+  log(DIM + "─".repeat(60) + RESET)
+  const code = local.execLocal({
+    cwd: cfg.workspace,
+    env: { CARACAL_LOCAL: "1", CARACAL_HITL: cfg.hitl },
+    command: ["opencode", "--agent", "orchestrator"],
+  })
+  process.exit(code)
+}
+
+async function cmdLaunch(cfg: CaracalConfig): Promise<void> {
   printBanner(cfg)
   if (cfg.target) {
     targets.ensureTarget(cfg.target)
     info(`Target: ${BOLD}${cfg.target}${RESET} ${DIM}(${targets.targetDir(cfg.target)})${RESET}`)
+  }
+  if (cfg.mode === "local") {
+    await confirmLocalMode()
+    requireOpencodeLocal()
+    info("Syncing Caracal plugin + agents into your opencode config…")
+    local.syncLocalConfig(cfg.repoRoot)
+    const models = applyModels(cfg)
+    openOpencodeLocal(cfg, models)
+    return
   }
   requireDocker()
   ensureImage(cfg)
@@ -272,11 +350,20 @@ function cmdLaunch(cfg: CaracalConfig): void {
 }
 
 function cmdBuild(cfg: CaracalConfig): void {
+  if (cfg.mode === "local") {
+    fail("'build' builds the Docker sandbox image and has no meaning in --local mode.")
+    process.exit(1)
+  }
   requireDocker()
   ensureImage(cfg, true)
 }
 
-function cmdShell(cfg: CaracalConfig): void {
+async function cmdShell(cfg: CaracalConfig): Promise<void> {
+  if (cfg.mode === "local") {
+    fail("'shell' opens a shell inside the Docker sandbox — not applicable in --local mode.")
+    log(`${DIM}You're already on the host; just open your own shell.${RESET}`)
+    process.exit(1)
+  }
   requireDocker()
   ensureImage(cfg)
   applyModels(cfg)
@@ -292,12 +379,18 @@ function cmdShell(cfg: CaracalConfig): void {
 
 function cmdStatus(cfg: CaracalConfig): void {
   log(`${BOLD}caracal status${RESET}`)
-  log(`  docker installed : ${docker.isDockerInstalled() ? GREEN + "yes" : RED + "no"}${RESET}`)
-  log(`  docker running   : ${docker.isDockerRunning() ? GREEN + "yes" : RED + "no"}${RESET}`)
-  log(
-    `  image (${cfg.image}) : ${docker.imageExists(cfg.image) ? GREEN + "built" : YELLOW + "missing"}${RESET}`,
-  )
-  log(`  container        : ${cfg.container} -> ${docker.containerState(cfg.container)}`)
+  log(`  mode             : ${cfg.mode === "local" ? YELLOW + "local (no isolation)" : GREEN + "sandbox"}${RESET}`)
+  if (cfg.mode === "local") {
+    log(`  opencode on PATH : ${local.isOpencodeInstalled() ? GREEN + "yes" : RED + "no"}${RESET}`)
+    log(`  opencode config  : ${local.opencodeConfigDir()}`)
+  } else {
+    log(`  docker installed : ${docker.isDockerInstalled() ? GREEN + "yes" : RED + "no"}${RESET}`)
+    log(`  docker running   : ${docker.isDockerRunning() ? GREEN + "yes" : RED + "no"}${RESET}`)
+    log(
+      `  image (${cfg.image}) : ${docker.imageExists(cfg.image) ? GREEN + "built" : YELLOW + "missing"}${RESET}`,
+    )
+    log(`  container        : ${cfg.container} -> ${docker.containerState(cfg.container)}`)
+  }
   log(`  target           : ${cfg.target ?? `${DIM}(CARACAL_WORKSPACE override)${RESET}`}`)
   log(`  workspace        : ${cfg.workspace}`)
   if (cfg.dataDir) log(`  session data     : ${cfg.dataDir}`)
@@ -464,8 +557,22 @@ function cmdDown(cfg: CaracalConfig): void {
   ok("Sandbox removed.")
 }
 
-function main(): void {
-  const cfg = loadConfig()
+/** Extract --local / --sandbox from argv (any position); mutates argv to remove them so
+ *  positional-arg parsing elsewhere (process.argv[3], [4], ...) is unaffected. */
+function extractModeFlag(argv: string[]): RunMode | undefined {
+  let mode: RunMode | undefined
+  for (let i = argv.length - 1; i >= 0; i--) {
+    if (argv[i] === "--local") mode = mode ?? "local"
+    else if (argv[i] === "--sandbox") mode = mode ?? "sandbox"
+    else continue
+    argv.splice(i, 1)
+  }
+  return mode
+}
+
+async function main(): Promise<void> {
+  const mode = extractModeFlag(process.argv)
+  const cfg = loadConfig(process.cwd(), mode)
   const arg = (process.argv[2] ?? "").toLowerCase()
 
   switch (arg) {
@@ -473,7 +580,7 @@ function main(): void {
     case "start":
     case "launch":
     case "up":
-      cmdLaunch(cfg)
+      await cmdLaunch(cfg)
       break
     case "target":
     case "use":
@@ -491,7 +598,7 @@ function main(): void {
       break
     case "shell":
     case "sh":
-      cmdShell(cfg)
+      await cmdShell(cfg)
       break
     case "status":
     case "ps":
@@ -529,4 +636,7 @@ function main(): void {
   }
 }
 
-main()
+main().catch((e) => {
+  fail(e instanceof Error ? e.message : String(e))
+  process.exit(1)
+})

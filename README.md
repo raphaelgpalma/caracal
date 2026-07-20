@@ -65,15 +65,25 @@ See [`docs/architecture.md`](./docs/architecture.md) for the full mapping.
         you ⇄ orchestrator ⇄ specialist subagents ⇄ tools  (every dangerous step gated by HITL)
 ```
 
-opencode for Caracal is **only ever launched inside the sandbox**. The plugin
-additionally refuses to arm its offensive tooling unless it detects the sandbox
-marker (defense in depth — see [`docs/sandbox.md`](./docs/sandbox.md)).
+By default, opencode for Caracal is **only ever launched inside the sandbox**.
+The plugin refuses to arm its offensive tooling unless launched via `caracal`
+(defense in depth — see [`docs/sandbox.md`](./docs/sandbox.md)).
+
+**Prefer no Docker?** `caracal --local` runs opencode directly on the host
+instead — same plugin, agents, and HITL policy (synced into your host's
+opencode config on each launch), but **no container isolation**: the model's
+shell runs with your own user, network, and filesystem access. It's an
+explicit opt-out for operators who already work inside their own isolated
+environment, not the recommended default. See
+[`docs/sandbox.md`](./docs/sandbox.md) § Local mode before using it.
 
 ## Requirements
 
-- **Docker** (required — the launcher refuses to run without it)
+- **Docker** (default mode — the launcher refuses to run without it, unless you pass `--local`)
 - **Node.js ≥ 20** (to run the host launcher)
 - A model provider configured in opencode on your host (e.g. `opencode auth login`)
+- For `--local` mode instead: `opencode` itself installed and authenticated on
+  the host (no Docker needed) — see [`docs/sandbox.md`](./docs/sandbox.md).
 
 ## Quick start
 
@@ -85,6 +95,9 @@ npm run build
 # 2. Launch — builds the sandbox image on first run, then drops you into opencode
 node dist/launcher/index.js
 #   (or `npm link` once, then just: caracal)
+
+# No Docker? Run directly on the host instead (no isolation — read the docs first):
+caracal --local
 ```
 
 On first launch the framework starts in **strict HITL** mode: every potentially

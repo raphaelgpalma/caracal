@@ -3,16 +3,18 @@
  * ==========================
  *
  * This single plugin file is the heart of Caracal's safety + tooling layer. It
- * is loaded by opencode as GLOBAL config inside the sandbox container
- * (~/.config/opencode/plugin/caracal.ts) and provides four things:
+ * is loaded by opencode as GLOBAL config (~/.config/opencode/plugin/caracal.ts)
+ * — baked into the Docker sandbox image, or installed onto the host for local
+ * mode — and provides four things:
  *
  *   1. A consistent Human-In-The-Loop (HITL) policy, mirroring CAI's philosophy
  *      that a human stays in control of dangerous actions. Implemented on top of
  *      opencode's native permission machinery (`permission.ask`).
  *
- *   2. A hard safety floor + sandbox guard (`tool.execute.before`): destructive
- *      and host-escape commands are blocked in *every* mode, and offensive
- *      tooling refuses to run outside the Caracal sandbox.
+ *   2. A hard safety floor (`tool.execute.before`): destructive and
+ *      host-escape commands are blocked in *every* mode, and offensive tooling
+ *      refuses to run unless launched via `caracal` (sandbox or local mode) —
+ *      never from a bare, unmanaged opencode session.
  *
  *   3. Engagement helper tools (`tool`): structured note-taking and scope
  *      reading, so agents keep findings organized in the workspace.
@@ -39,13 +41,28 @@ import { promisify } from "node:util"
 /** strict = ask before anything intrusive · guided = ask before high-impact · auto = no prompts (lab only). */
 type HitlMode = "strict" | "guided" | "auto"
 
-function hitlMode(): HitlMode {
-  const v = (process.env.CARACAL_HITL ?? "strict").toLowerCase()
-  return v === "guided" || v === "auto" ? v : "strict"
+/** How opencode was launched: Docker sandbox, or directly on the host ("local"). */
+type RunMode = "sandbox" | "local" | "unmanaged"
+
+function runMode(): RunMode {
+  if (process.env.CARACAL_SANDBOX === "1") return "sandbox"
+  if (process.env.CARACAL_LOCAL === "1") return "local"
+  return "unmanaged"
 }
 
-function inSandbox(): boolean {
-  return process.env.CARACAL_SANDBOX === "1"
+function hitlMode(): HitlMode {
+  const v = (process.env.CARACAL_HITL ?? "strict").toLowerCase()
+  const requested = v === "guided" || v === "auto" ? v : "strict"
+  // Local mode has no container isolation, so silent `auto` is never allowed —
+  // the floor is `guided` (still pauses for exploit/script/unknown actions).
+  if (runMode() === "local" && requested === "auto") return "guided"
+  return requested
+}
+
+/** True whenever launched through `caracal` — sandboxed or local. Offensive
+ *  tooling requires this; a bare opencode session (unmanaged) never qualifies. */
+function isManaged(): boolean {
+  return runMode() !== "unmanaged"
 }
 
 // ---------------------------------------------------------------------------
@@ -645,12 +662,17 @@ export const CaracalPlugin: Plugin = async ({ client, directory }) => {
   // The engine drives agents through this client (bridged to the structural
   // EngineClient view; the real client is awaitable to the same {data,error}).
   const engineClient = client as unknown as EngineClient
-  if (!inSandbox()) {
+  const mode = runMode()
+  if (mode === "unmanaged") {
     log(
-      "WARNING: CARACAL_SANDBOX marker not found. Offensive tooling is disabled outside the sandbox.",
+      "WARNING: not launched via `caracal`. Offensive tooling is disabled — run `caracal` (sandbox, default) or `caracal --local`.",
+    )
+  } else if (mode === "local") {
+    log(
+      `WARNING: running in LOCAL mode (no container isolation) · HITL=${hitlMode()} · workspace=${directory}`,
     )
   } else {
-    log(`active · HITL=${hitlMode()} · workspace=${directory}`)
+    log(`active · sandbox · HITL=${hitlMode()} · workspace=${directory}`)
   }
 
   return {
@@ -690,10 +712,10 @@ export const CaracalPlugin: Plugin = async ({ client, directory }) => {
       if (input.tool !== "bash") return
       const command: string = String((output.args as { command?: unknown })?.command ?? "")
 
-      // Offensive shell only runs inside the sandbox.
-      if (!inSandbox()) {
+      // Offensive shell only runs when launched via `caracal` (sandbox or local).
+      if (!isManaged()) {
         throw new Error(
-          "[caracal] bash is disabled outside the Caracal sandbox. Launch via the `caracal` command.",
+          "[caracal] bash is disabled. Launch via `caracal` (sandboxed, default) or `caracal --local`.",
         )
       }
 
@@ -750,15 +772,18 @@ export const CaracalPlugin: Plugin = async ({ client, directory }) => {
 
       caracal_install: tool({
         description:
-          "Install pentest tooling on demand inside the sandbox via apt (e.g. hydra, netexec, smbclient, binwalk, metasploit-framework). Use when a tool you need is not already present. Only vetted security packages are accepted; for anything else, install with `apt-get` via bash (operator-gated).",
+          "Install pentest tooling on demand inside the Docker sandbox via apt (e.g. hydra, netexec, smbclient, binwalk, metasploit-framework). Sandbox mode only — in `--local` mode, the host's own package manager and existing toolset are used instead; ask the operator to install anything missing.",
         args: {
           packages: tool.schema
             .array(tool.schema.string())
             .describe("apt package names to install, e.g. ['hydra','netexec']."),
         },
         async execute(args, ctx) {
-          if (!inSandbox()) {
-            return "Refusing to install: not running inside the Caracal sandbox."
+          if (runMode() !== "sandbox") {
+            return (
+              "Refusing to apt-install: this tool only works inside the Caracal Docker sandbox. " +
+              "In local mode, install tooling yourself with the host's package manager, or ask the operator."
+            )
           }
           const requested = (args.packages ?? []).map((p) => p.trim().toLowerCase()).filter(Boolean)
           if (requested.length === 0) return "No packages specified."
