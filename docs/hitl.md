@@ -76,10 +76,17 @@ binary of each segment, so `nmap … | grep open` is still `recon` and
 
 Set it per launch: `CARACAL_HITL=guided caracal`, or in `.env`.
 
+To go straight to `auto` for one launch without editing `.env`, pass
+`caracal --yolo` (or `caracal --local --yolo`). Unlike `CARACAL_HITL=auto`,
+`--yolo` asks for a one-time interactive `y/N` confirmation before dropping
+into opencode (skippable with `CARACAL_YES=1` for scripted/CI use) — it's the
+same explicit-opt-in pattern as `--local`, since disabling every prompt is a
+bigger step to take by accident than to take deliberately.
+
 > In `caracal --local` (no container isolation, see `docs/sandbox.md`),
-> `auto` is capped down to `guided` — local mode never runs silently, even if
-> requested, because there is no sandbox to fall back on if something goes
-> wrong.
+> `auto` (from either `CARACAL_HITL=auto` or `--yolo`) is capped down to
+> `guided` — local mode never runs silently, even if requested, because there
+> is no sandbox to fall back on if something goes wrong.
 
 ## What the user sees
 
@@ -92,7 +99,9 @@ step in" guarantee.
 
 ## The safety floor is non-negotiable
 
-Regardless of mode (including `auto`), `tool.execute.before` blocks `destructive`
-and `escape` commands by throwing before execution, and refuses to run `bash` at
-all if the `CARACAL_SANDBOX` marker is absent. This is defense in depth: even a
+Regardless of mode (including `auto`/`--yolo`), `tool.execute.before` blocks
+`destructive` and `escape` commands by throwing before execution, and refuses
+to run `bash` at all unless launched via `caracal` (sandbox or `--local`).
+There is no flag that disables this layer — `--yolo` only removes the
+HITL *prompts*, not this floor. This is defense in depth: even a
 misconfiguration cannot let the model wipe a disk or escape the container.

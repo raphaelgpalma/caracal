@@ -78,6 +78,7 @@ function resolveMode(flag: RunMode | undefined): RunMode {
 export function loadConfig(
   cwd: string = process.cwd(),
   modeFlag?: RunMode,
+  hitlFlag?: HitlMode,
 ): CaracalConfig {
   loadDotEnv(cwd)
 
@@ -105,7 +106,7 @@ export function loadConfig(
     target,
     workspace,
     dataDir,
-    hitl: asHitl(process.env.CARACAL_HITL),
+    hitl: hitlFlag ?? asHitl(process.env.CARACAL_HITL),
     authMode: process.env.CARACAL_AUTH_MODE === "env" ? "env" : "mount",
     hostAuthFile: resolve(homedir(), ".local/share/opencode/auth.json"),
     model: process.env.CARACAL_MODEL || undefined,

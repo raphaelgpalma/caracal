@@ -37,7 +37,12 @@ import {
   writeWorkspaceModelConfig,
 } from "./models.js"
 
-/** Last-resort default model if none is configured (user runs Ollama Cloud). */
+/**
+ * Last-resort default model if the user never ran `caracal models` and never
+ * set CARACAL_MODEL. Assumes Ollama Cloud is authenticated on the host — if
+ * it isn't (nor any other provider that exposes this exact id), launch will
+ * warn via warnIfModelUnavailable() rather than fail silently.
+ */
 const FALLBACK_MODEL = "ollama-cloud/qwen3-coder:480b"
 
 const RESET = "\x1b[0m"
@@ -82,7 +87,7 @@ function printHelp(cfg: CaracalConfig): void {
   log(`${BOLD}caracal${RESET} ${DIM}v${version(cfg)}${RESET} — multi-agent pentesting on opencode
 
 ${BOLD}Usage${RESET}
-  caracal [command] [--local | --sandbox]
+  caracal [command] [--local | --sandbox] [--yolo]
 
 ${BOLD}Commands${RESET}
   ${CYAN}(default)${RESET}      build if needed, start the sandbox, open opencode on the active target
@@ -105,6 +110,15 @@ ${BOLD}Run mode${RESET} ${DIM}(sandbox is the default and the recommended mode)$
              filesystem access. Only use this if you understand and accept
              that risk (e.g. you already work inside your own VM/lab). Applies
              to the default launch and to 'shell'. Persist with CARACAL_MODE=local.
+
+${BOLD}Bypassing HITL prompts${RESET}
+  ${CYAN}--yolo${RESET}     shorthand for HITL=auto: ${YELLOW}no approval prompts at all${RESET} for this
+             launch (recon, exploitation, credential attacks, file edits, ...
+             all run unattended). The destructive/escape command blocklist is
+             a hard floor and still applies — it cannot be bypassed by any
+             flag or mode. Asks for interactive y/N confirmation first, same
+             as --local; skip that with CARACAL_YES=1 for scripted use.
+             Equivalent to (and overridden by) CARACAL_HITL=auto — see below.
 
 ${BOLD}Targets${RESET} ${DIM}(each is a persistent, separate engagement)${RESET}
   Files + opencode session live per target under ${DIM}~/.caracal/targets/<name>/${RESET}.
@@ -168,6 +182,34 @@ async function confirmLocalMode(): Promise<void> {
   rl.close()
   if (answer.trim().toLowerCase() !== "y") {
     fail("Aborted. Run without --local to use the sandboxed (default) mode.")
+    process.exit(1)
+  }
+}
+
+/**
+ * --yolo sets HITL to `auto`: the plugin's permission.ask stops prompting
+ * entirely (see runtime/plugin/caracal.ts). The hard safety floor
+ * (tool.execute.before — destructive/escape commands, and the sandbox/local
+ * launch-marker check) is NOT affected by HITL mode and keeps applying
+ * regardless. Require the same explicit confirmation as --local.
+ */
+async function confirmYolo(cfg: CaracalConfig): Promise<void> {
+  warn(`${BOLD}YOLO${RESET}${YELLOW} — HITL prompts are disabled (--yolo -> CARACAL_HITL=auto).${RESET}`)
+  log(
+    `${DIM}Every agent action (recon, exploitation, credential attacks, file edits, ...)\n` +
+      `will run without asking for approval. The destructive/escape command blocklist\n` +
+      `still applies and cannot be bypassed, but nothing else will pause for you.${RESET}`,
+  )
+  if (cfg.mode === "local") {
+    warn(`${YELLOW}Combined with --local (no container isolation), this is the least contained` +
+      ` mode Caracal offers.${RESET}`)
+  }
+  if (process.env.CARACAL_YES === "1") return
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  const answer = await rl.question(`Continue with HITL disabled? [y/N] `)
+  rl.close()
+  if (answer.trim().toLowerCase() !== "y") {
+    fail("Aborted. Run without --yolo to keep the HITL policy active.")
     process.exit(1)
   }
 }
@@ -272,6 +314,31 @@ function ensureContainer(cfg: CaracalConfig): void {
 }
 
 /**
+ * Warn (best-effort, never fatal) when the resolved default model doesn't
+ * match anything opencode can currently see on this host. The Caracal fallback
+ * (FALLBACK_MODEL) assumes Ollama Cloud is authenticated; if it isn't — and no
+ * other provider (OpenRouter, Anthropic, ...) is either — every agent that
+ * doesn't have an explicit per-agent override will fail at first prompt with
+ * an opaque "model is not valid" error from opencode itself. Catch that here
+ * with a clearer, actionable message instead.
+ */
+function warnIfModelUnavailable(defaultModel: string): void {
+  const available = listAccessibleModels()
+  if (available.length === 0) return // couldn't query — opencode not installed/auth'd; other checks already cover this
+  if (available.includes(defaultModel)) return
+  warn(`Default model '${defaultModel}' is not accessible with your current opencode auth.`)
+  log(
+    `${DIM}Caracal's built-in fallback assumes Ollama Cloud is logged in. If you use a\n` +
+      `different provider (OpenRouter, Anthropic, OpenAI, a local/free opencode model, ...),\n` +
+      `set it explicitly:\n` +
+      `  opencode auth login              # authenticate a provider, then\n` +
+      `  caracal models                   # assign a model per agent (interactive), or\n` +
+      `  CARACAL_MODEL=<provider/model>   # set the default via env/.env\n` +
+      `Accessible right now: ${available.slice(0, 6).join(", ")}${available.length > 6 ? ", …" : ""}${RESET}`,
+  )
+}
+
+/**
  * Resolve per-agent models and write them into the workspace opencode.json.
  * We do NOT pass `--model` to opencode (it would override every agent); the
  * merged workspace config drives both the default and per-agent models.
@@ -282,6 +349,7 @@ function applyModels(cfg: CaracalConfig): { default: string; agents: Record<stri
   const sel = loadSelection(targets.caracalHome(), cfg.model ?? FALLBACK_MODEL)
   const agentModels = resolveModels(agents, sel)
   writeWorkspaceModelConfig(cfg.workspace, sel.default, agentModels)
+  warnIfModelUnavailable(sel.default)
   return { default: sel.default, agents: agentModels }
 }
 
@@ -327,12 +395,13 @@ function openOpencodeLocal(
   process.exit(code)
 }
 
-async function cmdLaunch(cfg: CaracalConfig): Promise<void> {
+async function cmdLaunch(cfg: CaracalConfig, yolo: boolean): Promise<void> {
   printBanner(cfg)
   if (cfg.target) {
     targets.ensureTarget(cfg.target)
     info(`Target: ${BOLD}${cfg.target}${RESET} ${DIM}(${targets.targetDir(cfg.target)})${RESET}`)
   }
+  if (yolo) await confirmYolo(cfg)
   if (cfg.mode === "local") {
     await confirmLocalMode()
     requireOpencodeLocal()
@@ -557,22 +626,25 @@ function cmdDown(cfg: CaracalConfig): void {
   ok("Sandbox removed.")
 }
 
-/** Extract --local / --sandbox from argv (any position); mutates argv to remove them so
- *  positional-arg parsing elsewhere (process.argv[3], [4], ...) is unaffected. */
-function extractModeFlag(argv: string[]): RunMode | undefined {
+/** Extract --local / --sandbox / --yolo from argv (any position); mutates argv to
+ *  remove them so positional-arg parsing elsewhere (process.argv[3], [4], ...)
+ *  is unaffected. */
+function extractFlags(argv: string[]): { mode: RunMode | undefined; yolo: boolean } {
   let mode: RunMode | undefined
+  let yolo = false
   for (let i = argv.length - 1; i >= 0; i--) {
     if (argv[i] === "--local") mode = mode ?? "local"
     else if (argv[i] === "--sandbox") mode = mode ?? "sandbox"
+    else if (argv[i] === "--yolo") yolo = true
     else continue
     argv.splice(i, 1)
   }
-  return mode
+  return { mode, yolo }
 }
 
 async function main(): Promise<void> {
-  const mode = extractModeFlag(process.argv)
-  const cfg = loadConfig(process.cwd(), mode)
+  const { mode, yolo } = extractFlags(process.argv)
+  const cfg = loadConfig(process.cwd(), mode, yolo ? "auto" : undefined)
   const arg = (process.argv[2] ?? "").toLowerCase()
 
   switch (arg) {
@@ -580,7 +652,7 @@ async function main(): Promise<void> {
     case "start":
     case "launch":
     case "up":
-      await cmdLaunch(cfg)
+      await cmdLaunch(cfg, yolo)
       break
     case "target":
     case "use":
